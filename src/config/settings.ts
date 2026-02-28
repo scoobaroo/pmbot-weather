@@ -57,5 +57,13 @@ export const CITY_ALIASES: Record<string, string> = {
   seoul: "seoul",
 };
 
+// NOAA HRRR model config (via Open-Meteo standard forecast API)
+export const HRRR_CONFIG = {
+  name: "HRRR",
+  apiParam: "ncep_hrrr_conus",
+  maxHorizonHours: 18,
+  usOnly: true,
+} as const;
+
 // Temperature bucket boundaries commonly used in Polymarket (°F)
 export const DEFAULT_BUCKET_WIDTH = 5;

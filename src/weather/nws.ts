@@ -1,5 +1,5 @@
 import { CityConfig } from "../config/types";
-import { NwsForecast } from "./types";
+import { DeterministicForecast } from "./types";
 import { childLogger, withRetry } from "../utils";
 
 const log = childLogger("nws");
@@ -29,8 +29,9 @@ interface NwsForecastResponse {
  */
 export async function fetchNwsForecast(
   baseUrl: string,
-  city: CityConfig
-): Promise<NwsForecast[]> {
+  city: CityConfig,
+  weight = 1
+): Promise<DeterministicForecast[]> {
   if (city.country !== "US") {
     log.debug({ city: city.slug }, "Skipping NWS for non-US city");
     return [];
@@ -56,8 +57,9 @@ export async function fetchNwsForecast(
     return res.json() as Promise<NwsForecastResponse>;
   }, `nws-forecast-${city.slug}`);
 
-  const results: NwsForecast[] = [];
+  const results: DeterministicForecast[] = [];
   const periods = forecast.properties.periods;
+  const fetchedAt = new Date().toISOString();
 
   for (let i = 0; i < periods.length; i++) {
     const p = periods[i];
@@ -77,9 +79,12 @@ export async function fetchNwsForecast(
     results.push({
       city: city.slug,
       date,
+      source: "nws",
       highF,
       lowF: p.temperatureUnit === "C" ? (lowF * 9) / 5 + 32 : lowF,
       description: p.shortForecast,
+      weight,
+      fetchedAt,
     });
   }
 

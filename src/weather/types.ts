@@ -30,10 +30,17 @@ export interface BucketProbability {
   probability: number;  // 0-1
 }
 
-export interface NwsForecast {
+export interface DeterministicForecast {
   city: string;
   date: string;
+  source: string;
   highF: number;
-  lowF: number;
-  description: string;
+  lowF?: number;
+  description?: string;
+  weight: number;
+  fetchedAt: string;
+  horizonHours?: number;
 }
+
+/** @deprecated Use DeterministicForecast instead */
+export type NwsForecast = DeterministicForecast;

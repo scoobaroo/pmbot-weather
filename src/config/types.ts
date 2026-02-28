@@ -24,6 +24,9 @@ export interface AppConfig {
   // Weather
   openMeteoBaseUrl: string;
   nwsBaseUrl: string;
+  weatherApiKey: string;
+  enableHrrr: boolean;
+  deterministicWeight: number;
 
   // Strategy
   edgeThreshold: number; // minimum edge to trade (e.g. 0.08 = 8%)

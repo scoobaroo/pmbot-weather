@@ -1,5 +1,5 @@
 import { loadConfig, CITIES, ENSEMBLE_MODELS } from "./config";
-import { fetchAllModels, aggregateForecasts } from "./weather";
+import { fetchAllModels, aggregateForecasts, fetchDeterministicForecasts } from "./weather";
 import { scanWeatherMarkets } from "./market";
 import { computeEdges } from "./strategy/edge";
 import { generateSignals } from "./strategy/signals";
@@ -60,6 +60,9 @@ async function runCycle(): Promise<void> {
     const today = todayInTz(cityConfig.timezone);
     const tomorrow = tomorrowInTz(cityConfig.timezone);
 
+    // Fetch deterministic forecasts from all available sources
+    const deterministicForecasts = await fetchDeterministicForecasts(config, cityConfig, targetDates);
+
     for (const targetDate of targetDates) {
       // Only trade today's and tomorrow's markets
       if (targetDate !== today && targetDate !== tomorrow) {
@@ -78,7 +81,7 @@ async function runCycle(): Promise<void> {
 
       // Aggregate forecasts for this date
       try {
-        const aggregated = aggregateForecasts(forecasts, targetDate, buckets);
+        const aggregated = aggregateForecasts(forecasts, targetDate, buckets, deterministicForecasts);
 
         // Compute edges
         const edges = computeEdges(aggregated, dateMarkets);

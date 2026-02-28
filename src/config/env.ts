@@ -36,6 +36,9 @@ export function loadConfig(): AppConfig {
     // Weather
     openMeteoBaseUrl: optionalEnv("OPEN_METEO_BASE_URL", "https://ensemble-api.open-meteo.com/v1/ensemble"),
     nwsBaseUrl: optionalEnv("NWS_BASE_URL", "https://api.weather.gov"),
+    weatherApiKey: optionalEnv("WEATHER_API_KEY", ""),
+    enableHrrr: boolEnv("ENABLE_HRRR", true),
+    deterministicWeight: numEnv("DETERMINISTIC_WEIGHT", 1),
 
     // Strategy
     edgeThreshold: numEnv("EDGE_THRESHOLD", 0.08),

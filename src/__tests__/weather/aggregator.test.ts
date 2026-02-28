@@ -1,5 +1,5 @@
 import { aggregateForecasts, extractDailyHighs, computeBucketProbabilities } from "../../weather/aggregator";
-import { EnsembleForecast, EnsembleMember } from "../../weather/types";
+import { EnsembleForecast, EnsembleMember, DeterministicForecast } from "../../weather/types";
 
 function makeMember(model: string, index: number, temps: number[], date: string): EnsembleMember {
   const times = temps.map((_, i) => `${date}T${String(i).padStart(2, "0")}:00`);
@@ -93,5 +93,119 @@ describe("aggregateForecasts", () => {
     expect(() =>
       aggregateForecasts([], "2025-02-25", [])
     ).toThrow("No ensemble members");
+  });
+
+  it("injects deterministic forecasts as pseudo-members", () => {
+    const forecasts: EnsembleForecast[] = [
+      makeForecast("GFS", [
+        makeMember("GFS", 0, [40, 50, 45], "2025-02-25"),
+        makeMember("GFS", 1, [42, 52, 47], "2025-02-25"),
+      ]),
+    ];
+
+    const deterministicForecasts: DeterministicForecast[] = [
+      {
+        city: "nyc",
+        date: "2025-02-25",
+        source: "weatherapi",
+        highF: 55,
+        weight: 1,
+        fetchedAt: new Date().toISOString(),
+      },
+    ];
+
+    const buckets = [
+      { lower: null, upper: 52, label: "52°F or lower" },
+      { lower: 53, upper: null, label: "53°F or higher" },
+    ];
+
+    const result = aggregateForecasts(forecasts, "2025-02-25", buckets, deterministicForecasts);
+
+    // 2 ensemble members + 1 deterministic = 3 total
+    expect(result.totalMembers).toBe(3);
+    expect(result.highTemps).toContain(55);
+  });
+
+  it("repeats deterministic forecast by weight", () => {
+    const forecasts: EnsembleForecast[] = [
+      makeForecast("GFS", [
+        makeMember("GFS", 0, [40, 50, 45], "2025-02-25"),
+      ]),
+    ];
+
+    const deterministicForecasts: DeterministicForecast[] = [
+      {
+        city: "nyc",
+        date: "2025-02-25",
+        source: "nws",
+        highF: 60,
+        weight: 3,
+        fetchedAt: new Date().toISOString(),
+      },
+    ];
+
+    const buckets = [{ lower: null, upper: null, label: "all" }];
+    const result = aggregateForecasts(forecasts, "2025-02-25", buckets, deterministicForecasts);
+
+    // 1 ensemble + 3 (weight) deterministic = 4
+    expect(result.totalMembers).toBe(4);
+    expect(result.highTemps.filter((t) => t === 60)).toHaveLength(3);
+  });
+
+  it("skips HRRR for non-today dates", () => {
+    const forecasts: EnsembleForecast[] = [
+      makeForecast("GFS", [
+        makeMember("GFS", 0, [40, 50, 45], "2025-02-25"),
+      ]),
+    ];
+
+    const tomorrow = "2025-02-25";
+    const deterministicForecasts: DeterministicForecast[] = [
+      {
+        city: "nyc",
+        date: tomorrow,
+        source: "hrrr",
+        highF: 99,
+        weight: 1,
+        fetchedAt: new Date().toISOString(),
+        horizonHours: 18,
+      },
+    ];
+
+    const buckets = [{ lower: null, upper: null, label: "all" }];
+    const result = aggregateForecasts(forecasts, tomorrow, buckets, deterministicForecasts);
+
+    // HRRR has horizonHours=18, and tomorrow != today, so it should be skipped
+    // Only ensemble member should remain
+    const today = new Date().toISOString().split("T")[0];
+    if (tomorrow !== today) {
+      expect(result.totalMembers).toBe(1);
+      expect(result.highTemps).not.toContain(99);
+    }
+  });
+
+  it("ignores deterministic forecasts for different dates", () => {
+    const forecasts: EnsembleForecast[] = [
+      makeForecast("GFS", [
+        makeMember("GFS", 0, [40, 50, 45], "2025-02-25"),
+      ]),
+    ];
+
+    const deterministicForecasts: DeterministicForecast[] = [
+      {
+        city: "nyc",
+        date: "2025-02-26", // different date
+        source: "weatherapi",
+        highF: 99,
+        weight: 1,
+        fetchedAt: new Date().toISOString(),
+      },
+    ];
+
+    const buckets = [{ lower: null, upper: null, label: "all" }];
+    const result = aggregateForecasts(forecasts, "2025-02-25", buckets, deterministicForecasts);
+
+    expect(result.totalMembers).toBe(1);
+    expect(result.highTemps).not.toContain(99);
   });
 });

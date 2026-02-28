@@ -1,4 +1,4 @@
-import { EnsembleForecast, AggregatedForecast, BucketProbability, EnsembleMember } from "./types";
+import { EnsembleForecast, AggregatedForecast, BucketProbability, EnsembleMember, DeterministicForecast } from "./types";
 import { mean, stdDev, empiricalProbability } from "../utils/math";
 import { childLogger } from "../utils/logger";
 
@@ -11,7 +11,8 @@ const log = childLogger("aggregator");
 export function aggregateForecasts(
   forecasts: EnsembleForecast[],
   targetDate: string,
-  buckets: Array<{ lower: number | null; upper: number | null; label: string }>
+  buckets: Array<{ lower: number | null; upper: number | null; label: string }>,
+  deterministicForecasts?: DeterministicForecast[]
 ): AggregatedForecast {
   const allMembers: EnsembleMember[] = [];
   for (const f of forecasts) {
@@ -26,6 +27,22 @@ export function aggregateForecasts(
 
   // Extract daily high for target date from each member
   const highTemps = extractDailyHighs(allMembers, targetDate);
+
+  // Inject deterministic forecasts as pseudo-members
+  if (deterministicForecasts) {
+    for (const df of deterministicForecasts) {
+      if (df.date !== targetDate) continue;
+      // Skip short-horizon models (e.g. HRRR 18h) for non-today dates
+      if (df.horizonHours && df.horizonHours <= 18) {
+        const today = new Date().toISOString().split("T")[0];
+        if (targetDate !== today) continue;
+      }
+      for (let i = 0; i < df.weight; i++) {
+        highTemps.push(df.highF);
+      }
+      log.debug({ source: df.source, highF: df.highF, weight: df.weight, date: targetDate }, "Injected deterministic forecast");
+    }
+  }
 
   if (highTemps.length === 0) {
     throw new Error(`No temperature data for ${targetDate} in any member`);
