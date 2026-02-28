@@ -8,6 +8,7 @@ export interface ParsedMarket {
   bucketLower: number | null;
   bucketUpper: number | null;
   bucketLabel: string;
+  unit: "°F" | "°C";
 }
 
 /**
@@ -31,7 +32,7 @@ export function parseMarketTitle(title: string): ParsedMarket | null {
   if (!date) return null;
 
   // Determine metric (high vs low)
-  const metric = /\blow\s+temperature\b/.test(lower) ? "low" : "high";
+  const metric = /\b(?:low|lowest)\s+temperature\b/.test(lower) ? "low" : "high";
 
   // Extract temperature bucket
   const bucket = extractBucket(title);
@@ -80,12 +81,16 @@ interface BucketResult {
   bucketLower: number | null;
   bucketUpper: number | null;
   bucketLabel: string;
+  unit: "°F" | "°C";
 }
 
 function extractBucket(title: string): BucketResult | null {
-  // "between X°F and Y°F" or "X°F to Y°F" or "X-Y°F"
+  // Detect unit (°F or °C) — default to °F
+  const unit = /°C\b/.test(title) ? "°C" : "°F";
+
+  // "between X and Y°F" or "X°F to Y°F" or "X-Y°F" or "X–Y°C" (em-dash)
   const rangeMatch = title.match(
-    /(?:between\s+)?(-?\d+)\s*°?\s*F?\s*(?:and|to|-)\s*(-?\d+)\s*°?\s*F/i
+    /(?:between\s+)?(-?\d+)\s*°?\s*[FC]?\s*(?:and|to|-|–)\s*(-?\d+)\s*°\s*[FC]/i
   );
   if (rangeMatch) {
     const low = parseInt(rangeMatch[1], 10);
@@ -93,33 +98,50 @@ function extractBucket(title: string): BucketResult | null {
     return {
       bucketLower: low,
       bucketUpper: high,
-      bucketLabel: `${low}-${high}°F`,
+      bucketLabel: `${low}-${high}${unit}`,
+      unit,
     };
   }
 
   // "X°F or higher" / "at least X°F" / "above X°F"
   const higherMatch = title.match(
-    /(-?\d+)\s*°?\s*F?\s*or\s+(?:higher|more|above)|(?:at\s+least|above|over)\s+(-?\d+)\s*°?\s*F/i
+    /(-?\d+)\s*°\s*[FC]?\s*or\s+(?:higher|more|above)|(?:at\s+least|above|over)\s+(-?\d+)\s*°\s*[FC]/i
   );
   if (higherMatch) {
     const val = parseInt(higherMatch[1] || higherMatch[2], 10);
     return {
       bucketLower: val,
       bucketUpper: null,
-      bucketLabel: `${val}°F or higher`,
+      bucketLabel: `${val}${unit} or higher`,
+      unit,
     };
   }
 
-  // "X°F or lower" / "below X°F" / "under X°F"
+  // "X°F or lower" / "below X°F" / "under X°F" / "X°C or below"
   const lowerMatch = title.match(
-    /(-?\d+)\s*°?\s*F?\s*or\s+(?:lower|less|below)|(?:below|under)\s+(-?\d+)\s*°?\s*F/i
+    /(-?\d+)\s*°\s*[FC]?\s*or\s+(?:lower|less|below)|(?:below|under)\s+(-?\d+)\s*°\s*[FC]/i
   );
   if (lowerMatch) {
     const val = parseInt(lowerMatch[1] || lowerMatch[2], 10);
     return {
       bucketLower: null,
       bucketUpper: val,
-      bucketLabel: `${val}°F or lower`,
+      bucketLabel: `${val}${unit} or lower`,
+      unit,
+    };
+  }
+
+  // Exact temperature: "be 15°C on" — single-degree bucket
+  const exactMatch = title.match(
+    /\bbe\s+(-?\d+)\s*°\s*([FC])\b/i
+  );
+  if (exactMatch) {
+    const val = parseInt(exactMatch[1], 10);
+    return {
+      bucketLower: val,
+      bucketUpper: val,
+      bucketLabel: `${val}${unit}`,
+      unit,
     };
   }
 

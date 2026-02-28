@@ -41,8 +41,10 @@ export function parseMarketDate(dateStr: string): string | null {
   if (monthDayMatch) {
     const parsed = new Date(`${dateStr}, ${currentYear}`);
     if (!isNaN(parsed.getTime())) {
-      // If date is in the past, try next year
-      if (parsed < now) {
+      // Allow dates up to 7 days in the past (markets resolve shortly after)
+      // Only bump to next year if more than 7 days ago
+      const msAgo = now.getTime() - parsed.getTime();
+      if (msAgo > 7 * 86_400_000) {
         parsed.setFullYear(currentYear + 1);
       }
       return formatDateLocal(parsed);
@@ -55,7 +57,8 @@ export function parseMarketDate(dateStr: string): string | null {
     const month = parseInt(slashMatch[1], 10) - 1;
     const day = parseInt(slashMatch[2], 10);
     const parsed = new Date(currentYear, month, day);
-    if (parsed < now) parsed.setFullYear(currentYear + 1);
+    const msAgo = now.getTime() - parsed.getTime();
+    if (msAgo > 7 * 86_400_000) parsed.setFullYear(currentYear + 1);
     return formatDateLocal(parsed);
   }
 

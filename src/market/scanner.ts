@@ -4,6 +4,19 @@ import { childLogger, withRetry } from "../utils";
 
 const log = childLogger("scanner");
 
+/** Gamma API "Daily Temperature" tag ID. */
+const TEMPERATURE_TAG_ID = "103040";
+
+interface GammaMarket {
+  conditionId: string;
+  question: string;
+  clobTokenIds: string; // JSON array string: '["yesTokenId", "noTokenId"]'
+  outcomePrices: string; // JSON array string: '["0.35", "0.65"]'
+  closed: boolean;
+  active: boolean;
+  acceptingOrders: boolean;
+}
+
 interface GammaEvent {
   id: string;
   slug: string;
@@ -11,32 +24,17 @@ interface GammaEvent {
   description: string;
   endDate: string;
   active: boolean;
-  markets: Array<{
-    id: string;
-    conditionId: string;
-    question: string;
-    tokens: Array<{
-      token_id: string;
-      outcome: string;
-    }>;
-    outcomePrices: string; // JSON string of [yesPrice, noPrice]
-  }>;
-}
-
-interface GammaResponse {
-  data?: GammaEvent[];
-  // Sometimes it's a direct array
-  [index: number]: GammaEvent;
+  markets: GammaMarket[];
 }
 
 /**
- * Scan Gamma API for active weather/temperature markets.
+ * Scan Gamma API for active weather/temperature events using tag_id filter.
  */
 export async function scanWeatherMarkets(
   gammaApiUrl: string
 ): Promise<WeatherEvent[]> {
-  const events = await fetchWeatherEvents(gammaApiUrl);
-  log.info({ rawEvents: events.length }, "Found weather events on Gamma");
+  const events = await fetchTemperatureEvents(gammaApiUrl);
+  log.info({ rawEvents: events.length }, "Found temperature events on Gamma");
 
   const weatherEvents: WeatherEvent[] = [];
 
@@ -47,7 +45,7 @@ export async function scanWeatherMarkets(
         conditionId: event.id,
         slug: event.slug,
         title: event.title,
-        description: event.description,
+        description: event.description || "",
         endDate: event.endDate,
         active: event.active,
         markets,
@@ -66,61 +64,73 @@ export async function scanWeatherMarkets(
   return weatherEvents;
 }
 
-async function fetchWeatherEvents(gammaApiUrl: string): Promise<GammaEvent[]> {
-  // Search for temperature-related events
-  const searchTerms = ["temperature", "weather", "high temp"];
-  const allEvents: Map<string, GammaEvent> = new Map();
+async function fetchTemperatureEvents(gammaApiUrl: string): Promise<GammaEvent[]> {
+  const allEvents: GammaEvent[] = [];
+  let offset = 0;
+  const limit = 100;
 
-  for (const term of searchTerms) {
+  // Paginate through temperature-tagged events
+  while (true) {
     try {
       const events = await withRetry(async () => {
-        const url = `${gammaApiUrl}/events?tag=temperature&active=true&closed=false&limit=50`;
+        const url = `${gammaApiUrl}/events?tag_id=${TEMPERATURE_TAG_ID}&active=true&closed=false&limit=${limit}&offset=${offset}`;
         const res = await fetch(url);
-        if (!res.ok) {
-          // Try alternative search
-          const altUrl = `${gammaApiUrl}/events?title_contains=${encodeURIComponent(term)}&active=true&closed=false&limit=50`;
-          const altRes = await fetch(altUrl);
-          if (!altRes.ok) throw new Error(`Gamma API ${altRes.status}`);
-          return altRes.json();
-        }
-        return res.json();
-      }, `gamma-search-${term}`);
+        if (!res.ok) throw new Error(`Gamma API ${res.status}`);
+        return res.json() as Promise<GammaEvent[]>;
+      }, "gamma-temperature");
 
-      const eventArray: GammaEvent[] = Array.isArray(events) ? events : (events as GammaResponse).data || [];
-      for (const e of eventArray) {
-        if (e.id) allEvents.set(e.id, e);
-      }
+      const eventArray: GammaEvent[] = Array.isArray(events) ? events : [];
+      if (eventArray.length === 0) break;
+
+      allEvents.push(...eventArray);
+      offset += limit;
+
+      // Safety: don't paginate beyond reasonable bounds
+      if (offset >= 1000) break;
     } catch (err) {
-      log.warn({ term, err }, "Failed to search Gamma");
+      log.warn({ err, offset }, "Failed to fetch temperature events");
+      break;
     }
   }
 
-  return Array.from(allEvents.values());
+  return allEvents;
 }
 
 function parseEventMarkets(event: GammaEvent): WeatherMarket[] {
   const markets: WeatherMarket[] = [];
 
   for (const m of event.markets || []) {
+    // Skip markets that aren't accepting orders
+    if (!m.acceptingOrders) continue;
+
     const parsed = parseMarketTitle(m.question || event.title);
     if (!parsed) continue;
 
-    // Get Yes token
-    const yesToken = m.tokens?.find((t) => t.outcome === "Yes");
-    if (!yesToken) continue;
-
-    // Parse prices
-    let price = 0.5;
+    // Parse clobTokenIds — JSON array ["yesTokenId", "noTokenId"]
+    let yesTokenId: string;
     try {
-      const prices = JSON.parse(m.outcomePrices || "[]");
-      if (prices[0]) price = parseFloat(prices[0]);
+      const tokenIds: string[] = JSON.parse(m.clobTokenIds || "[]");
+      if (tokenIds.length === 0) continue;
+      yesTokenId = tokenIds[0]; // First token is Yes
     } catch {
-      // use default
+      log.warn({ question: m.question }, "Failed to parse clobTokenIds — skipping");
+      continue;
     }
 
+    // Parse outcomePrices — JSON array ["yesPrice", "noPrice"]
+    let price: number;
+    try {
+      const prices: string[] = JSON.parse(m.outcomePrices || "[]");
+      price = parseFloat(prices[0]);
+    } catch {
+      log.warn({ question: m.question }, "Failed to parse outcomePrices — skipping");
+      continue;
+    }
+    if (isNaN(price) || price <= 0 || price >= 1) continue;
+
     markets.push({
-      conditionId: m.conditionId || m.id,
-      tokenId: yesToken.token_id,
+      conditionId: m.conditionId,
+      tokenId: yesTokenId,
       outcome: "Yes",
       price,
       question: m.question || event.title,
@@ -129,6 +139,7 @@ function parseEventMarkets(event: GammaEvent): WeatherMarket[] {
       bucketLower: parsed.bucketLower,
       bucketUpper: parsed.bucketUpper,
       bucketLabel: parsed.bucketLabel,
+      unit: parsed.unit,
     });
   }
 

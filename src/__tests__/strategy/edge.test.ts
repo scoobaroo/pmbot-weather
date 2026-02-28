@@ -26,6 +26,7 @@ function makeMarket(overrides: Partial<WeatherMarket> = {}): WeatherMarket {
     bucketLower: 45,
     bucketUpper: 50,
     bucketLabel: "45-50°F",
+    unit: "°F",
     ...overrides,
   };
 }

@@ -4,7 +4,7 @@ export interface CityConfig {
   latitude: number;
   longitude: number;
   timezone: string;
-  country: "US" | "KR" | "GB";
+  country: string;
 }
 
 export interface EnsembleModelConfig {

@@ -2,6 +2,10 @@
  * Basic statistical functions and kernel density estimation.
  */
 
+export function cToF(c: number): number {
+  return (c * 9) / 5 + 32;
+}
+
 export function mean(values: number[]): number {
   if (values.length === 0) return 0;
   return values.reduce((s, v) => s + v, 0) / values.length;

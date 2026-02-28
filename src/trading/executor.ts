@@ -1,4 +1,5 @@
 import { ClobClient, Side, OrderType } from "@polymarket/clob-client";
+import { AssetType, OrderResponse } from "@polymarket/clob-client/dist/types";
 import { TradeSignal } from "../strategy/types";
 import { ExecutionResult } from "./types";
 import { AppConfig } from "../config/types";
@@ -7,6 +8,26 @@ import { PositionTracker } from "./positions";
 import { childLogger } from "../utils/logger";
 
 const log = childLogger("executor");
+
+/**
+ * Validate that an order response indicates success.
+ */
+function validateOrderResponse(resp: unknown): asserts resp is OrderResponse {
+  const r = resp as OrderResponse | undefined;
+  if (!r) throw new Error("Empty order response");
+  if (r.success === false) throw new Error(`Order rejected: ${r.errorMsg || "unknown"}`);
+  if (!r.orderID) throw new Error(`Order response missing orderID: ${JSON.stringify(r)}`);
+}
+
+/**
+ * Check USDC balance before trading.
+ */
+export async function checkBalance(client: ClobClient): Promise<number> {
+  const resp = await client.getBalanceAllowance({ asset_type: AssetType.COLLATERAL });
+  const balance = parseFloat(resp.balance);
+  log.info({ balance: balance.toFixed(2) }, "USDC balance");
+  return balance;
+}
 
 /**
  * Execute trade signals via the CLOB, or dry-run log them.
@@ -18,6 +39,20 @@ export async function executeSignals(
   config: AppConfig
 ): Promise<ExecutionResult[]> {
   const results: ExecutionResult[] = [];
+
+  // Check balance before placing any live orders
+  if (!config.dryRun) {
+    try {
+      const balance = await checkBalance(client);
+      if (balance < 1) {
+        log.warn({ balance }, "Insufficient USDC balance — skipping all orders");
+        return results;
+      }
+    } catch (err) {
+      log.error({ err }, "Failed to check balance — skipping all orders");
+      return results;
+    }
+  }
 
   for (const signal of signals) {
     // Risk check
@@ -105,7 +140,7 @@ async function executeLiveOrder(
   tracker: PositionTracker
 ): Promise<ExecutionResult> {
   const side = signal.side === "YES" ? Side.BUY : Side.SELL;
-  const size = signal.sizeUsd / signal.marketPrice; // convert USD to shares
+  const size = Math.round((signal.sizeUsd / signal.marketPrice) * 100) / 100; // round to 2dp
 
   log.info(
     { bucket: signal.bucketLabel, side: signal.side, price: signal.marketPrice, size },
@@ -123,10 +158,13 @@ async function executeLiveOrder(
     OrderType.GTC
   );
 
-  const orderId = resp?.orderID || resp?.id || "unknown";
-  const status = resp?.status === "matched" ? "FILLED" : "PLACED";
+  // Validate before tracking
+  validateOrderResponse(resp);
 
-  // Track the position
+  const orderId = resp.orderID;
+  const status = resp.status === "matched" ? "FILLED" : "PLACED";
+
+  // Track only confirmed orders
   tracker.addFill(
     signal.tokenId,
     signal.conditionId,
@@ -138,7 +176,7 @@ async function executeLiveOrder(
     signal.sizeUsd
   );
 
-  log.info({ orderId, status, bucket: signal.bucketLabel }, "Order placed");
+  log.info({ orderId, status, bucket: signal.bucketLabel }, "Order confirmed");
 
   return {
     orderId,

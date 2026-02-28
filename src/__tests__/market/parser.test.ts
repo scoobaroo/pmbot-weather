@@ -12,6 +12,7 @@ describe("parseMarketTitle", () => {
       bucketLower: 40,
       bucketUpper: 44,
       bucketLabel: "40-44°F",
+      unit: "°F",
     });
   });
 
@@ -26,6 +27,7 @@ describe("parseMarketTitle", () => {
       bucketLower: 50,
       bucketUpper: null,
       bucketLabel: "50°F or higher",
+      unit: "°F",
     });
   });
 
@@ -40,6 +42,7 @@ describe("parseMarketTitle", () => {
       bucketLower: null,
       bucketUpper: 35,
       bucketLabel: "35°F or lower",
+      unit: "°F",
     });
   });
 
@@ -78,5 +81,63 @@ describe("parseMarketTitle", () => {
     expect(result).not.toBeNull();
     expect(result!.bucketLower).toBe(-5);
     expect(result!.bucketUpper).toBe(0);
+  });
+
+  it("parses 'highest temperature' (real Polymarket format)", () => {
+    const result = parseMarketTitle(
+      "Will the highest temperature in New York City be between 32-33°F on March 1?"
+    );
+    expect(result).not.toBeNull();
+    expect(result!.city).toBe("nyc");
+    expect(result!.metric).toBe("high");
+    expect(result!.bucketLower).toBe(32);
+    expect(result!.bucketUpper).toBe(33);
+    expect(result!.bucketLabel).toBe("32-33°F");
+    expect(result!.unit).toBe("°F");
+  });
+
+  it("parses 'or below' bucket (real Polymarket format)", () => {
+    const result = parseMarketTitle(
+      "Will the highest temperature in New York City be 31°F or below on March 1?"
+    );
+    expect(result).not.toBeNull();
+    expect(result!.bucketLower).toBeNull();
+    expect(result!.bucketUpper).toBe(31);
+    expect(result!.bucketLabel).toBe("31°F or lower");
+    expect(result!.unit).toBe("°F");
+  });
+
+  it("parses Celsius range with em-dash", () => {
+    const result = parseMarketTitle(
+      "Will the highest temperature in London be between 7–8°C on March 1?"
+    );
+    expect(result).not.toBeNull();
+    expect(result!.city).toBe("london");
+    expect(result!.bucketLower).toBe(7);
+    expect(result!.bucketUpper).toBe(8);
+    expect(result!.bucketLabel).toBe("7-8°C");
+    expect(result!.unit).toBe("°C");
+  });
+
+  it("parses Celsius 'or below'", () => {
+    const result = parseMarketTitle(
+      "Will the highest temperature in London be 6°C or below on March 1?"
+    );
+    expect(result).not.toBeNull();
+    expect(result!.bucketLower).toBeNull();
+    expect(result!.bucketUpper).toBe(6);
+    expect(result!.bucketLabel).toBe("6°C or lower");
+    expect(result!.unit).toBe("°C");
+  });
+
+  it("parses negative Celsius", () => {
+    const result = parseMarketTitle(
+      "Will the highest temperature in Seoul be -11°C or below on March 1?"
+    );
+    expect(result).not.toBeNull();
+    expect(result!.city).toBe("seoul");
+    expect(result!.bucketUpper).toBe(-11);
+    expect(result!.bucketLabel).toBe("-11°C or lower");
+    expect(result!.unit).toBe("°C");
   });
 });

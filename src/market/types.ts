@@ -19,6 +19,7 @@ export interface WeatherMarket {
   bucketLower: number | null;
   bucketUpper: number | null;
   bucketLabel: string;
+  unit: "°F" | "°C";
 }
 
 export interface OrderBookEntry {

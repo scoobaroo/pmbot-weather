@@ -1,14 +1,115 @@
 import { loadConfig, CITIES, ENSEMBLE_MODELS } from "./config";
+import { AppConfig } from "./config/types";
 import { fetchAllModels, aggregateForecasts, fetchDeterministicForecasts } from "./weather";
 import { scanWeatherMarkets } from "./market";
 import { computeEdges } from "./strategy/edge";
 import { generateSignals } from "./strategy/signals";
 import { getClobClient, executeSignals, PositionTracker } from "./trading";
-import { childLogger, todayInTz, tomorrowInTz } from "./utils";
+import { childLogger, todayInTz, tomorrowInTz, cToF } from "./utils";
 
 const log = childLogger("main");
 
 const tracker = new PositionTracker();
+let shuttingDown = false;
+
+// --- Graceful shutdown (Fix 5) ---
+function onShutdown(signal: string): void {
+  log.info({ signal }, "Shutdown signal received — saving state");
+  shuttingDown = true;
+  tracker.saveState();
+  process.exit(0);
+}
+process.on("SIGINT", () => onShutdown("SIGINT"));
+process.on("SIGTERM", () => onShutdown("SIGTERM"));
+
+// --- Settlement check (Fix 3) ---
+async function checkSettlements(config: AppConfig): Promise<void> {
+  const positions = tracker.getPositions();
+  if (positions.length === 0) return;
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  for (const pos of positions) {
+    // Only check positions whose market date has passed
+    if (pos.date >= today) continue;
+
+    try {
+      // Look up market by CLOB token ID on Gamma API
+      const url = `${config.gammaApiUrl}/markets?clob_token_ids=${pos.tokenId}`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        log.warn({ tokenId: pos.tokenId.slice(0, 8), status: res.status }, "Settlement check failed");
+        continue;
+      }
+
+      const markets = await res.json() as Array<{
+        closed?: boolean;
+        resolved?: boolean;
+        outcomePrices?: string;
+      }>;
+      const market = Array.isArray(markets) ? markets[0] : undefined;
+      if (!market) continue;
+
+      if (market.closed || market.resolved) {
+        // Determine settlement from outcomePrices: resolved markets show "1"/"0"
+        let settlementPrice = 0;
+        if (market.outcomePrices) {
+          try {
+            const prices: string[] = JSON.parse(market.outcomePrices);
+            const yesPrice = parseFloat(prices[0]);
+            // For resolved markets, Yes price is 1.0 (winner) or 0.0 (loser)
+            if (!isNaN(yesPrice)) {
+              settlementPrice = pos.side === "YES" ? yesPrice : 1 - yesPrice;
+            }
+          } catch { /* fallback to 0 */ }
+        }
+
+        const pnl = tracker.closePosition(pos.tokenId, settlementPrice);
+        log.info(
+          { tokenId: pos.tokenId.slice(0, 8), bucket: pos.bucketLabel, settlementPrice, pnl: pnl.toFixed(2) },
+          "Position settled"
+        );
+      }
+    } catch (err) {
+      log.warn({ err, tokenId: pos.tokenId.slice(0, 8) }, "Error checking settlement");
+    }
+  }
+}
+
+// --- Live price updates (Fix 6) ---
+async function updateLivePrices(config: AppConfig): Promise<void> {
+  const positions = tracker.getPositions();
+  if (positions.length === 0) return;
+
+  const priceMap = new Map<string, number>();
+
+  for (const pos of positions) {
+    try {
+      // Look up market by CLOB token ID on Gamma API
+      const url = `${config.gammaApiUrl}/markets?clob_token_ids=${pos.tokenId}`;
+      const res = await fetch(url);
+      if (!res.ok) continue;
+
+      const markets = await res.json() as Array<{ outcomePrices?: string }>;
+      const market = Array.isArray(markets) ? markets[0] : undefined;
+      if (!market?.outcomePrices) continue;
+
+      try {
+        const prices: string[] = JSON.parse(market.outcomePrices);
+        const price = parseFloat(prices[0]); // Yes price
+        if (!isNaN(price) && price > 0 && price < 1) {
+          priceMap.set(pos.tokenId, price);
+        }
+      } catch { /* skip */ }
+    } catch {
+      // Non-critical — skip
+    }
+  }
+
+  if (priceMap.size > 0) {
+    tracker.updatePrices(priceMap);
+  }
+}
 
 async function runCycle(): Promise<void> {
   const config = loadConfig();
@@ -73,9 +174,10 @@ async function runCycle(): Promise<void> {
       const dateMarkets = markets.filter((m) => m.date === targetDate);
 
       // Build bucket list from market definitions
+      // Convert °C boundaries to °F so aggregator compares in consistent units
       const buckets = dateMarkets.map((m) => ({
-        lower: m.bucketLower,
-        upper: m.bucketUpper,
+        lower: m.unit === "°C" && m.bucketLower !== null ? cToF(m.bucketLower) : m.bucketLower,
+        upper: m.unit === "°C" && m.bucketUpper !== null ? cToF(m.bucketUpper) : m.bucketUpper,
         label: m.bucketLabel,
       }));
 
@@ -107,7 +209,13 @@ async function runCycle(): Promise<void> {
     log.info("No actionable signals this cycle");
   }
 
-  // 5. Log position summary
+  // 5. Check settlements for past-date positions
+  await checkSettlements(config);
+
+  // 6. Update live prices for unrealized P&L
+  await updateLivePrices(config);
+
+  // 7. Log position summary
   const positions = tracker.getPositions();
   if (positions.length > 0) {
     log.info(
@@ -119,10 +227,16 @@ async function runCycle(): Promise<void> {
       "Position summary"
     );
   }
+
+  // Save state at end of every cycle
+  tracker.saveState();
 }
 
 async function main(): Promise<void> {
   const config = loadConfig();
+
+  // Load persisted state
+  tracker.loadState();
 
   log.info(
     {
@@ -140,6 +254,7 @@ async function main(): Promise<void> {
 
   // Schedule recurring cycles
   setInterval(async () => {
+    if (shuttingDown) return;
     try {
       await runCycle();
     } catch (err) {
