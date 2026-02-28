@@ -24,7 +24,9 @@ function validateOrderResponse(resp: unknown): asserts resp is OrderResponse {
  */
 export async function checkBalance(client: ClobClient): Promise<number> {
   const resp = await client.getBalanceAllowance({ asset_type: AssetType.COLLATERAL });
-  const balance = parseFloat(resp.balance);
+  const rawBalance = parseFloat(resp.balance);
+  // USDC has 6 decimals — API may return raw units or already-formatted
+  const balance = rawBalance > 1_000_000 ? rawBalance / 1_000_000 : rawBalance;
   log.info({ balance: balance.toFixed(2) }, "USDC balance");
   return balance;
 }

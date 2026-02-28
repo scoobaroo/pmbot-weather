@@ -31,6 +31,7 @@ export function loadConfig(): AppConfig {
     clobApiUrl: optionalEnv("CLOB_API_URL", "https://clob.polymarket.com"),
     gammaApiUrl: optionalEnv("GAMMA_API_URL", "https://gamma-api.polymarket.com"),
     privateKey: boolEnv("DRY_RUN", true) ? optionalEnv("PRIVATE_KEY", "") : requireEnv("PRIVATE_KEY"),
+    proxyWallet: optionalEnv("PROXY_WALLET", ""),
     chainId: numEnv("CHAIN_ID", 137),
 
     // Weather

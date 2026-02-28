@@ -19,6 +19,7 @@ export interface AppConfig {
   clobApiUrl: string;
   gammaApiUrl: string;
   privateKey: string;
+  proxyWallet: string;
   chainId: number;
 
   // Weather

@@ -7,6 +7,7 @@ const mockConfig: AppConfig = {
   clobApiUrl: "",
   gammaApiUrl: "",
   privateKey: "",
+    proxyWallet: "",
   chainId: 137,
   openMeteoBaseUrl: "",
   nwsBaseUrl: "",

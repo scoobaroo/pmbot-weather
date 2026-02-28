@@ -4,7 +4,7 @@ import { fetchAllModels, aggregateForecasts, fetchDeterministicForecasts } from 
 import { scanWeatherMarkets } from "./market";
 import { computeEdges } from "./strategy/edge";
 import { generateSignals } from "./strategy/signals";
-import { getClobClient, executeSignals, PositionTracker } from "./trading";
+import { getClobClient, executeSignals, PositionTracker, evaluateExits, executeExits } from "./trading";
 import { childLogger, todayInTz, tomorrowInTz, cToF } from "./utils";
 
 const log = childLogger("main");
@@ -136,6 +136,8 @@ async function runCycle(): Promise<void> {
   // 3. For each city with markets, fetch forecasts and compute edges
   const client = await getClobClient(config);
   const allSignals: Awaited<ReturnType<typeof generateSignals>> = [];
+  // Track forecast probabilities for profit-taking on open positions
+  const forecastMap = new Map<string, number>(); // tokenId → forecast prob
 
   for (const [citySlug, markets] of marketsByCity) {
     const cityConfig = CITIES.find((c) => c.slug === citySlug);
@@ -188,6 +190,16 @@ async function runCycle(): Promise<void> {
         // Compute edges
         const edges = computeEdges(aggregated, dateMarkets);
 
+        // Store forecast probabilities for all markets (used by profit-taker)
+        for (const bp of aggregated.bucketProbabilities) {
+          const matchingMarket = dateMarkets.find(
+            (m) => m.bucketLabel === bp.label
+          );
+          if (matchingMarket) {
+            forecastMap.set(matchingMarket.tokenId, bp.probability);
+          }
+        }
+
         // Generate trade signals
         const signals = generateSignals(edges, aggregated, config);
         allSignals.push(...signals);
@@ -197,7 +209,23 @@ async function runCycle(): Promise<void> {
     }
   }
 
-  // 4. Execute signals
+  // 4. Evaluate and execute exits on open positions (profit-taking / loss-cutting)
+  const openPositions = tracker.getPositions();
+  if (openPositions.length > 0) {
+    // Build price map from current market prices
+    const priceMap = new Map<string, number>();
+    for (const m of allMarkets) {
+      priceMap.set(m.tokenId, m.price);
+    }
+
+    const exits = evaluateExits(openPositions, forecastMap, priceMap, config);
+    if (exits.length > 0) {
+      const exitCount = await executeExits(exits, client, tracker, config);
+      log.info({ exited: exitCount, evaluated: openPositions.length }, "Profit-taking complete");
+    }
+  }
+
+  // 5. Execute new entry signals
   if (allSignals.length > 0) {
     log.info({ signalCount: allSignals.length }, "Executing trade signals");
     const results = await executeSignals(allSignals, client, tracker, config);
@@ -209,13 +237,13 @@ async function runCycle(): Promise<void> {
     log.info("No actionable signals this cycle");
   }
 
-  // 5. Check settlements for past-date positions
+  // 6. Check settlements for past-date positions
   await checkSettlements(config);
 
-  // 6. Update live prices for unrealized P&L
+  // 7. Update live prices for unrealized P&L
   await updateLivePrices(config);
 
-  // 7. Log position summary
+  // 8. Log position summary
   const positions = tracker.getPositions();
   if (positions.length > 0) {
     log.info(
