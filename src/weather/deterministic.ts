@@ -1,7 +1,7 @@
 import { AppConfig, CityConfig } from "../config/types";
-import { DeterministicForecast } from "./types";
+import { DeterministicForecast, ObservedConditions } from "./types";
 import { fetchNwsForecast } from "./nws";
-import { fetchWeatherApiForecast } from "./weatherapi";
+import { fetchWeatherApiForecast, fetchObservedConditions } from "./weatherapi";
 import { fetchHrrrForecast } from "./hrrr";
 import { childLogger } from "../utils";
 
@@ -60,4 +60,21 @@ export async function fetchDeterministicForecasts(
   );
 
   return all;
+}
+
+/**
+ * Fetch observed conditions for a city. Returns null if unavailable.
+ */
+export async function fetchObserved(
+  config: AppConfig,
+  city: CityConfig
+): Promise<ObservedConditions | null> {
+  if (!config.weatherApiKey) return null;
+
+  try {
+    return await fetchObservedConditions(config.weatherApiKey, city);
+  } catch (err) {
+    log.warn({ err, city: city.slug }, "Failed to fetch observed conditions");
+    return null;
+  }
 }

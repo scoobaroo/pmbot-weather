@@ -3,12 +3,13 @@ export { aggregateForecasts, extractDailyHighs, computeBucketProbabilities } fro
 export { fetchNwsForecast } from "./nws";
 export { fetchWeatherApiForecast } from "./weatherapi";
 export { fetchHrrrForecast } from "./hrrr";
-export { fetchDeterministicForecasts } from "./deterministic";
+export { fetchDeterministicForecasts, fetchObserved } from "./deterministic";
 export type {
   EnsembleForecast,
   EnsembleMember,
   AggregatedForecast,
   BucketProbability,
   DeterministicForecast,
+  ObservedConditions,
   NwsForecast,
 } from "./types";

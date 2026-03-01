@@ -76,6 +76,17 @@ function formatDateLocal(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+/** Get current hour (0-23) in a given timezone. */
+export function currentHourInTz(timezone: string): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    hour: "numeric",
+    hour12: false,
+  }).formatToParts(new Date());
+
+  return parseInt(parts.find((p) => p.type === "hour")!.value, 10);
+}
+
 /** Check if a date string is within the next N days. */
 export function isWithinDays(dateStr: string, days: number): boolean {
   const target = new Date(dateStr + "T00:00:00Z");

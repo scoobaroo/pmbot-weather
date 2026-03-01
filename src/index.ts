@@ -1,6 +1,6 @@
 import { loadConfig, CITIES, ENSEMBLE_MODELS } from "./config";
 import { AppConfig } from "./config/types";
-import { fetchAllModels, aggregateForecasts, fetchDeterministicForecasts } from "./weather";
+import { fetchAllModels, aggregateForecasts, fetchDeterministicForecasts, fetchObserved, ObservedConditions } from "./weather";
 import { scanWeatherMarkets } from "./market";
 import { computeEdges } from "./strategy/edge";
 import { generateSignals } from "./strategy/signals";
@@ -166,6 +166,18 @@ async function runCycle(): Promise<void> {
     // Fetch deterministic forecasts from all available sources
     const deterministicForecasts = await fetchDeterministicForecasts(config, cityConfig, targetDates);
 
+    // Fetch observed conditions for same-day trading constraints
+    let observed: ObservedConditions | null = null;
+    if (targetDates.includes(today)) {
+      observed = await fetchObserved(config, cityConfig);
+      if (observed) {
+        log.info(
+          { city: citySlug, observedHighF: observed.observedHighF, localHour: observed.localHour },
+          "Observed conditions for same-day constraint"
+        );
+      }
+    }
+
     for (const targetDate of targetDates) {
       // Only trade today's and tomorrow's markets
       if (targetDate !== today && targetDate !== tomorrow) {
@@ -185,7 +197,10 @@ async function runCycle(): Promise<void> {
 
       // Aggregate forecasts for this date
       try {
-        const aggregated = aggregateForecasts(forecasts, targetDate, buckets, deterministicForecasts);
+        const aggregated = aggregateForecasts(
+          forecasts, targetDate, buckets, deterministicForecasts,
+          targetDate === today ? observed ?? undefined : undefined
+        );
 
         // Compute edges
         const edges = computeEdges(aggregated, dateMarkets);

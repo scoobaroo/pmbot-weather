@@ -1,4 +1,4 @@
-import { EnsembleForecast, AggregatedForecast, BucketProbability, EnsembleMember, DeterministicForecast } from "./types";
+import { EnsembleForecast, AggregatedForecast, BucketProbability, EnsembleMember, DeterministicForecast, ObservedConditions } from "./types";
 import { mean, stdDev, empiricalProbability } from "../utils/math";
 import { childLogger } from "../utils/logger";
 
@@ -12,7 +12,8 @@ export function aggregateForecasts(
   forecasts: EnsembleForecast[],
   targetDate: string,
   buckets: Array<{ lower: number | null; upper: number | null; label: string }>,
-  deterministicForecasts?: DeterministicForecast[]
+  deterministicForecasts?: DeterministicForecast[],
+  observed?: ObservedConditions
 ): AggregatedForecast {
   const allMembers: EnsembleMember[] = [];
   for (const f of forecasts) {
@@ -42,6 +43,36 @@ export function aggregateForecasts(
       }
       log.debug({ source: df.source, highF: df.highF, weight: df.weight, date: targetDate }, "Injected deterministic forecast");
     }
+  }
+
+  // Apply observed-high constraint for same-day markets based on local hour
+  if (observed) {
+    const hour = observed.localHour;
+    const obsHigh = observed.observedHighF;
+
+    if (hour >= 18) {
+      // Evening: observation dominates — push with 5x weight
+      const weight = highTemps.length * 5;
+      for (let i = 0; i < weight; i++) highTemps.push(obsHigh);
+      log.info({ hour, obsHigh, weight, phase: "evening" }, "Observed high dominates ensemble");
+    } else if (hour >= 14) {
+      // Afternoon: floor + strong observation weight (2x)
+      const before = highTemps.length;
+      const filtered = highTemps.filter((t) => t >= obsHigh);
+      highTemps.length = 0;
+      highTemps.push(...(filtered.length > 0 ? filtered : [obsHigh]));
+      const weight = highTemps.length * 2;
+      for (let i = 0; i < weight; i++) highTemps.push(obsHigh);
+      log.info({ hour, obsHigh, removed: before - filtered.length, weight, phase: "afternoon" }, "Floored + weighted observed high");
+    } else if (hour >= 10) {
+      // Late morning: floor only — remove members below observed high
+      const before = highTemps.length;
+      const filtered = highTemps.filter((t) => t >= obsHigh);
+      highTemps.length = 0;
+      highTemps.push(...(filtered.length > 0 ? filtered : [obsHigh]));
+      log.info({ hour, obsHigh, removed: before - filtered.length, phase: "late-morning" }, "Floored ensemble at observed high");
+    }
+    // Early morning (<10): no adjustment
   }
 
   if (highTemps.length === 0) {

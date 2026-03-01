@@ -1,10 +1,13 @@
 import { CityConfig } from "../config/types";
-import { DeterministicForecast } from "./types";
-import { childLogger, withRetry } from "../utils";
+import { DeterministicForecast, ObservedConditions } from "./types";
+import { childLogger, withRetry, currentHourInTz } from "../utils";
 
 const log = childLogger("weatherapi");
 
 interface WeatherApiResponse {
+  current?: {
+    temp_f: number;
+  };
   forecast: {
     forecastday: Array<{
       date: string;
@@ -48,4 +51,40 @@ export async function fetchWeatherApiForecast(
 
   log.info({ city: city.slug, days: results.length }, "Fetched WeatherAPI forecast");
   return results;
+}
+
+/**
+ * Fetch current observed conditions from WeatherAPI.com.
+ * Returns the running observed high for today and current temp.
+ */
+export async function fetchObservedConditions(
+  apiKey: string,
+  city: CityConfig
+): Promise<ObservedConditions> {
+  const url = `https://api.weatherapi.com/v1/forecast.json?key=${apiKey}&q=${city.latitude},${city.longitude}&days=1`;
+  log.debug({ city: city.slug }, "Fetching observed conditions");
+
+  const data = await withRetry(async () => {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`WeatherAPI ${res.status}: ${await res.text()}`);
+    return res.json() as Promise<WeatherApiResponse>;
+  }, `weatherapi-observed-${city.slug}`);
+
+  const today = data.forecast.forecastday[0];
+  const localHour = currentHourInTz(city.timezone);
+
+  const result: ObservedConditions = {
+    city: city.slug,
+    currentTempF: data.current?.temp_f ?? today.day.maxtemp_f,
+    observedHighF: today.day.maxtemp_f,
+    localHour,
+    fetchedAt: new Date().toISOString(),
+  };
+
+  log.info(
+    { city: city.slug, observedHighF: result.observedHighF, currentTempF: result.currentTempF, localHour },
+    "Fetched observed conditions"
+  );
+
+  return result;
 }

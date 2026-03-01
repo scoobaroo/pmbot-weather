@@ -42,5 +42,13 @@ export interface DeterministicForecast {
   horizonHours?: number;
 }
 
+export interface ObservedConditions {
+  city: string;
+  currentTempF: number;
+  observedHighF: number; // forecastday[0].day.maxtemp_f — updates throughout day
+  localHour: number;
+  fetchedAt: string;
+}
+
 /** @deprecated Use DeterministicForecast instead */
 export type NwsForecast = DeterministicForecast;
