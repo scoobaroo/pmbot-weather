@@ -73,10 +73,15 @@ export async function fetchObservedConditions(
   const today = data.forecast.forecastday[0];
   const localHour = currentHourInTz(city.timezone);
 
+  // maxtemp_f is the forecast max, not running observed max.
+  // Use the higher of current temp and forecast max as the true floor.
+  const currentTemp = data.current?.temp_f ?? today.day.maxtemp_f;
+  const observedHigh = Math.max(currentTemp, today.day.maxtemp_f);
+
   const result: ObservedConditions = {
     city: city.slug,
-    currentTempF: data.current?.temp_f ?? today.day.maxtemp_f,
-    observedHighF: today.day.maxtemp_f,
+    currentTempF: currentTemp,
+    observedHighF: observedHigh,
     localHour,
     fetchedAt: new Date().toISOString(),
   };
