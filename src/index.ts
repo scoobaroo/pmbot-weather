@@ -4,7 +4,7 @@ import { fetchAllModels, aggregateForecasts, fetchDeterministicForecasts, fetchO
 import { scanWeatherMarkets } from "./market";
 import { computeEdges } from "./strategy/edge";
 import { generateSignals } from "./strategy/signals";
-import { getClobClient, executeSignals, PositionTracker, evaluateExits, executeExits } from "./trading";
+import { getClobClient, executeSignals, PositionTracker } from "./trading";
 import { childLogger, todayInTz, tomorrowInTz, cToF } from "./utils";
 
 const log = childLogger("main");
@@ -136,8 +136,6 @@ async function runCycle(): Promise<void> {
   // 3. For each city with markets, fetch forecasts and compute edges
   const client = await getClobClient(config);
   const allSignals: Awaited<ReturnType<typeof generateSignals>> = [];
-  // Track forecast probabilities for profit-taking on open positions
-  const forecastMap = new Map<string, number>(); // tokenId → forecast prob
 
   for (const [citySlug, markets] of marketsByCity) {
     const cityConfig = CITIES.find((c) => c.slug === citySlug);
@@ -205,16 +203,6 @@ async function runCycle(): Promise<void> {
         // Compute edges
         const edges = computeEdges(aggregated, dateMarkets);
 
-        // Store forecast probabilities for all markets (used by profit-taker)
-        for (const bp of aggregated.bucketProbabilities) {
-          const matchingMarket = dateMarkets.find(
-            (m) => m.bucketLabel === bp.label
-          );
-          if (matchingMarket) {
-            forecastMap.set(matchingMarket.tokenId, bp.probability);
-          }
-        }
-
         // Generate trade signals
         const signals = generateSignals(edges, aggregated, config);
         allSignals.push(...signals);
@@ -224,21 +212,9 @@ async function runCycle(): Promise<void> {
     }
   }
 
-  // 4. Evaluate and execute exits on open positions (profit-taking / loss-cutting)
-  const openPositions = tracker.getPositions();
-  if (openPositions.length > 0) {
-    // Build price map from current market prices
-    const priceMap = new Map<string, number>();
-    for (const m of allMarkets) {
-      priceMap.set(m.tokenId, m.price);
-    }
-
-    const exits = evaluateExits(openPositions, forecastMap, priceMap, config);
-    if (exits.length > 0) {
-      const exitCount = await executeExits(exits, client, tracker, config);
-      log.info({ exited: exitCount, evaluated: openPositions.length }, "Profit-taking complete");
-    }
-  }
+  // 4. Hold positions to settlement — no early exits
+  // Profit-taking was selling into spreads and losing money on binary markets
+  // that resolve within hours/days. Let settlement handle P&L.
 
   // 5. Execute new entry signals
   if (allSignals.length > 0) {
