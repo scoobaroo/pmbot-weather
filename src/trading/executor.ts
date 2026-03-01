@@ -33,6 +33,7 @@ export async function checkBalance(client: ClobClient): Promise<number> {
 
 /**
  * Execute trade signals via the CLOB, or dry-run log them.
+ * Tracks remaining balance within the cycle to avoid overcommitting.
  */
 export async function executeSignals(
   signals: TradeSignal[],
@@ -43,11 +44,12 @@ export async function executeSignals(
   const results: ExecutionResult[] = [];
 
   // Check balance before placing any live orders
+  let remainingBalance = Infinity;
   if (!config.dryRun) {
     try {
-      const balance = await checkBalance(client);
-      if (balance < 1) {
-        log.warn({ balance }, "Insufficient USDC balance — skipping all orders");
+      remainingBalance = await checkBalance(client);
+      if (remainingBalance < 1) {
+        log.warn({ balance: remainingBalance }, "Insufficient USDC balance — skipping all orders");
         return results;
       }
     } catch (err) {
@@ -57,6 +59,25 @@ export async function executeSignals(
   }
 
   for (const signal of signals) {
+    // Skip if we've run out of balance this cycle
+    if (!config.dryRun && signal.sizeUsd > remainingBalance) {
+      log.warn(
+        { bucket: signal.bucketLabel, size: signal.sizeUsd.toFixed(2), remaining: remainingBalance.toFixed(2) },
+        "Insufficient remaining balance — skipping"
+      );
+      results.push({
+        orderId: "",
+        tokenId: signal.tokenId,
+        side: signal.side === "YES" ? "BUY" : "SELL",
+        price: signal.marketPrice,
+        size: signal.sizeUsd,
+        status: "FAILED",
+        timestamp: new Date().toISOString(),
+        error: "Insufficient remaining balance",
+      });
+      continue;
+    }
+
     // Risk check
     const riskCheck = canPlaceTrade(
       signal.sizeUsd,
@@ -90,6 +111,11 @@ export async function executeSignals(
 
     try {
       const result = await executeLiveOrder(signal, client, tracker);
+      // Deduct from remaining balance on success
+      if (result.status !== "FAILED") {
+        remainingBalance -= signal.sizeUsd;
+        log.debug({ remaining: remainingBalance.toFixed(2) }, "Balance after order");
+      }
       results.push(result);
     } catch (err) {
       log.error({ err, signal: signal.bucketLabel }, "Order execution failed");
@@ -141,18 +167,20 @@ async function executeLiveOrder(
   client: ClobClient,
   tracker: PositionTracker
 ): Promise<ExecutionResult> {
+  // Polymarket price bounds: 0.001–0.999
+  const price = Math.max(0.001, Math.min(0.999, Math.round(signal.marketPrice * 1000) / 1000));
   const side = signal.side === "YES" ? Side.BUY : Side.SELL;
-  const size = Math.round((signal.sizeUsd / signal.marketPrice) * 100) / 100; // round to 2dp
+  const size = Math.round((signal.sizeUsd / price) * 100) / 100; // round to 2dp
 
   log.info(
-    { bucket: signal.bucketLabel, side: signal.side, price: signal.marketPrice, size },
+    { bucket: signal.bucketLabel, side: signal.side, price, size },
     "Placing live order"
   );
 
   const resp = await client.createAndPostOrder(
     {
       tokenID: signal.tokenId,
-      price: signal.marketPrice,
+      price,
       size,
       side,
     },

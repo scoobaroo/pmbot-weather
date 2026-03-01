@@ -14,7 +14,7 @@ export function evaluateRisk(
 ): RiskState {
   const totalExposure = positions.reduce((sum, p) => sum + p.costBasis, 0);
   const openPositionCount = positions.length;
-  const maxPositionReached = totalExposure >= config.maxPositionUsd * 5; // allow ~5 concurrent positions
+  const maxPositionReached = totalExposure >= config.bankrollUsd * 0.8; // use up to 80% of bankroll
   const dailyLossLimitHit = dailyRealizedPnl <= -config.maxDailyLossUsd;
 
   const canTrade = !maxPositionReached && !dailyLossLimitHit;

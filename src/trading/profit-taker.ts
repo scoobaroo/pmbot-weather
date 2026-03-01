@@ -140,10 +140,9 @@ export async function executeExits(
       // To exit a YES position: sell YES tokens at current market price
       // To exit a NO position: sell NO tokens (buy YES at current price)
       const side = pos.side === "YES" ? Side.SELL : Side.BUY;
-      const price = exit.currentPrice;
-      const size = Math.round(pos.size * 100) / 100;
+      const amount = Math.round(pos.size * 100) / 100; // shares for SELL, USDC for BUY
 
-      if (size < 1) {
+      if (amount < 1) {
         log.debug({ bucket: pos.bucketLabel }, "Position too small to exit");
         continue;
       }
@@ -152,22 +151,20 @@ export async function executeExits(
         {
           bucket: pos.bucketLabel,
           side: pos.side === "YES" ? "SELL" : "BUY_TO_CLOSE",
-          price,
-          size,
+          amount,
           reason: exit.reason,
         },
-        "Exiting position"
+        "Exiting position (FOK market order)"
       );
 
-      const resp = await client.createAndPostOrder(
+      const resp = await client.createAndPostMarketOrder(
         {
           tokenID: pos.tokenId,
-          price,
-          size,
+          amount,
           side,
         },
         undefined,
-        OrderType.GTC
+        OrderType.FOK
       );
 
       const r = resp as { orderID?: string; success?: boolean; errorMsg?: string } | undefined;
