@@ -58,7 +58,16 @@ export async function executeSignals(
     }
   }
 
+  // Build set of tokenIds we already hold — no re-entry / averaging in
+  const heldTokenIds = new Set(tracker.getPositions().map((p) => p.tokenId));
+
   for (const signal of signals) {
+    // Skip markets where we already hold a position
+    if (heldTokenIds.has(signal.tokenId)) {
+      log.debug({ bucket: signal.bucketLabel }, "Already holding position — skipping");
+      continue;
+    }
+
     // Skip if we've run out of balance this cycle
     if (!config.dryRun && signal.sizeUsd > remainingBalance) {
       log.warn(
@@ -111,9 +120,10 @@ export async function executeSignals(
 
     try {
       const result = await executeLiveOrder(signal, client, tracker);
-      // Deduct from remaining balance on success
+      // Deduct from remaining balance on success and mark as held
       if (result.status !== "FAILED") {
         remainingBalance -= signal.sizeUsd;
+        heldTokenIds.add(signal.tokenId);
         log.debug({ remaining: remainingBalance.toFixed(2) }, "Balance after order");
       }
       results.push(result);
