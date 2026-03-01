@@ -139,10 +139,13 @@ export class PositionTracker {
   /** Update current prices and P&L. */
   updatePrices(priceMap: Map<string, number>): void {
     for (const [tokenId, pos] of this.positions) {
-      const price = priceMap.get(tokenId);
-      if (price !== undefined) {
-        pos.currentPrice = price;
-        pos.unrealizedPnl = (price - pos.avgPrice) * pos.size;
+      const yesPrice = priceMap.get(tokenId);
+      if (yesPrice !== undefined) {
+        // For YES: our asset is worth yesPrice
+        // For NO: our asset is worth (1 - yesPrice)
+        const effectivePrice = pos.side === "NO" ? 1 - yesPrice : yesPrice;
+        pos.currentPrice = effectivePrice;
+        pos.unrealizedPnl = (effectivePrice - pos.avgPrice) * pos.size;
       }
     }
   }

@@ -56,8 +56,8 @@ export function computeEdges(
         city: market.city,
         date: market.date,
         bucketLabel: market.bucketLabel,
-        forecastProb,
-        marketPrice: 1 - marketPrice,
+        forecastProb: 1 - forecastProb, // P(NO wins) for Kelly sizing
+        marketPrice: 1 - marketPrice,   // NO entry cost
         edge: noEdge,
         side: "NO",
       });

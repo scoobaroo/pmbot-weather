@@ -11,13 +11,25 @@ const log = childLogger("main");
 
 const tracker = new PositionTracker();
 let shuttingDown = false;
+let cycleRunning = false;
 
-// --- Graceful shutdown (Fix 5) ---
+// --- Graceful shutdown ---
 function onShutdown(signal: string): void {
-  log.info({ signal }, "Shutdown signal received — saving state");
+  if (shuttingDown) return; // Prevent double-handling
+  log.info({ signal }, "Shutdown signal received — waiting for in-flight cycle");
   shuttingDown = true;
-  tracker.saveState();
-  process.exit(0);
+
+  // Wait for any running cycle to finish, then save and exit
+  const waitAndExit = (): void => {
+    if (cycleRunning) {
+      setTimeout(waitAndExit, 500);
+      return;
+    }
+    log.info("Cycle complete — saving state and exiting");
+    tracker.saveState();
+    process.exit(0);
+  };
+  waitAndExit();
 }
 process.on("SIGINT", () => onShutdown("SIGINT"));
 process.on("SIGTERM", () => onShutdown("SIGTERM"));
@@ -112,12 +124,31 @@ async function updateLivePrices(config: AppConfig): Promise<void> {
 }
 
 async function runCycle(): Promise<void> {
+  if (cycleRunning) {
+    log.warn("Previous cycle still running — skipping");
+    return;
+  }
+  cycleRunning = true;
+  try {
+    await runCycleInner();
+  } finally {
+    cycleRunning = false;
+  }
+}
+
+async function runCycleInner(): Promise<void> {
   const config = loadConfig();
   log.info({ dryRun: config.dryRun }, "Starting trade cycle");
 
   // 1. Scan for active weather markets
   const events = await scanWeatherMarkets(config.gammaApiUrl);
-  const allMarkets = events.flatMap((e) => e.markets);
+  // Deduplicate markets by tokenId — Gamma can return the same market across events
+  const seenTokenIds = new Set<string>();
+  const allMarkets = events.flatMap((e) => e.markets).filter((m) => {
+    if (seenTokenIds.has(m.tokenId)) return false;
+    seenTokenIds.add(m.tokenId);
+    return true;
+  });
   log.info({ marketCount: allMarkets.length }, "Active weather markets");
 
   if (allMarkets.length === 0) {
